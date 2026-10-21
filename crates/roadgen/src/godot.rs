@@ -3,20 +3,28 @@
 //! Parity targets (see docs/godot-road-parity.md):
 //!   * RoadPoint: lane_width, shoulder_width_l/r, gutter_profile(x,y),
 //!     prior_mag/next_mag (Bézier handles), traffic_dir lanes, alignment,
-//!     underside_thickness, terminated.
+//!     underside_thickness, terminated, generate_mesh_at_intersections,
+//!     edge_edge_clipping_offset.
 //!   * RoadSegment: loop cuts every `density` meters (DEFAULT_DENSITY=4.0),
 //!     LOWPOLY_FACTOR=3.0, 8-column trimsheet UVs with uv_mul
 //!     = [7,0,1,2,3,4,5,6,7,7], UV flow snap rules from _build_geo(),
 //!     edge_C/edge_F/edge_R curves, per-lane paths (RoadLane parity).
 //!   * RoadManager: density, underside_thickness, auto_lanes, low_poly.
+//!   * RoadIntersection / intersection_ngon (Phase 3): roads that share a
+//!     RoadPoint (proximity join, RoadManager parity) form junctions —
+//!     approaches are trimmed back when generate_mesh_at_intersections is on
+//!     (extended by edge_edge_clipping_offset) and the gap is filled with a
+//!     chamfered pavement n-gon plus stop lines and zebra crosswalks.
 //!
 //! Documented deltas: lateral frame is tangent-derived (Godot eases endpoint
 //! bases); lane transitions blend widths linearly instead of the full
-//! _match_lanes TRANSITION_ADD/REM matcher (Phase 2).
+//! _match_lanes TRANSITION_ADD/REM matcher (Phase 2); junction n-gon is a
+//! chamfered octagon instead of the full dynamic re-paving solver.
 
 #![allow(clippy::needless_range_loop)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // --- godot-road-generator constants (verbatim parity) ---
 pub const DEFAULT_LANE_WIDTH: f32 = 4.0; // RoadPoint.DEFAULT_LANE_WIDTH
@@ -175,6 +183,14 @@ pub struct RoadPointData {
     pub underside_thickness: f32, // -1 → inherit manager
     #[serde(default)]
     pub terminated: bool,
+    /// godot RoadPoint.generate_mesh_at_intersections — trim the mesh back
+    /// where this point joins another road so the junction n-gon can fill it.
+    #[serde(default = "d_true")]
+    pub generate_mesh_at_intersections: bool,
+    /// godot RoadPoint.edge_edge_clipping_offset — extra meters trimmed past
+    /// the junction pavement edge.
+    #[serde(default)]
+    pub edge_edge_clipping_offset: f32,
 }
 
 #[derive(Deserialize)]
@@ -193,7 +209,14 @@ pub struct ManagerData {
 pub struct GenRequest {
     #[serde(default)]
     pub manager: ManagerData,
+    /// Legacy single-road input (used when `roads` is empty).
+    #[serde(default)]
     pub points: Vec<RoadPointData>,
+    /// Road network: roads[0] is the main road; any point of roads[1..]
+    /// coinciding with a main-road point forms a junction (RoadManager
+    /// proximity parity).
+    #[serde(default)]
+    pub roads: Vec<Vec<RoadPointData>>,
 }
 
 fn d_mag() -> f32 {
@@ -317,6 +340,11 @@ fn build_section(p: &RoadPointData) -> Vec<ColSpec> {
     cols
 }
 
+/// Half of the full surface width (junction sizing).
+fn section_half_width(p: &RoadPointData) -> f32 {
+    build_section(p).iter().map(|c| c.width).sum::<f32>() * 0.5
+}
+
 // ---------------------------------------------------------------------------
 // Unified column (start/end cross-section blend — _match_lanes approximation)
 // ---------------------------------------------------------------------------
@@ -382,12 +410,7 @@ fn unify_sections(sec_s: &[ColSpec], sec_e: &[ColSpec]) -> Vec<UniCol> {
     let nb = re.len();
     let count = na.max(nb);
     for k in 0..count {
-        out.push(pair_cols(
-            rs.get(k),
-            k < na,
-            re.get(k),
-            k < nb,
-        ));
+        out.push(pair_cols(rs.get(k), k < na, re.get(k), k < nb));
     }
     out
 }
@@ -457,16 +480,39 @@ pub struct LanePath {
     pub lane_type: u8,
 }
 
+/// One detected junction (RoadIntersection parity).
+#[derive(Serialize, Clone)]
+pub struct JunctionInfo {
+    /// Number of meeting road arms: 4 = cross, 3 = T, 2 = corner.
+    pub kind: u8,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    /// Index into roads[0] (main road) of the shared RoadPoint.
+    pub main_idx: usize,
+    /// Cross road index (≥1) and point index of the shared RoadPoint.
+    pub cross_road: usize,
+    pub cross_idx: usize,
+}
+
 #[derive(Serialize, Default)]
 pub struct GenResponse {
     pub road: MeshData,
-    /// edge_C / edge_F / edge_R polylines (RoadSegment edge-curve parity).
-    pub edge_c: Vec<f32>,
-    pub edge_f: Vec<f32>,
-    pub edge_r: Vec<f32>,
+    /// edge_C / edge_F / edge_R polylines per segment (RoadSegment edge-curve
+    /// parity; split at junction trims so lines never cross the n-gon).
+    pub edge_c: Vec<Vec<f32>>,
+    pub edge_f: Vec<Vec<f32>>,
+    pub edge_r: Vec<Vec<f32>>,
     /// Per-lane center paths (RoadLane parity).
     pub lanes: Vec<LanePath>,
-    pub centerline: Vec<f32>,
+    /// Centerline polyline per segment (editor visual).
+    pub centerline: Vec<Vec<f32>>,
+    /// Junction pavement n-gons (render as flat asphalt).
+    pub junctions: MeshData,
+    /// Junction markings: stop lines + zebra crosswalks (flat white).
+    pub junction_marks: MeshData,
+    pub junction_count: u32,
+    pub junction_info: Vec<JunctionInfo>,
     pub loop_count: u32,
     pub length: f32,
     pub vertex_count: u32,
@@ -481,42 +527,43 @@ const UP: Vec3 = Vec3 {
     z: 0.0,
 };
 
-/// RoadSegment._build_geo UV flow snapping (verbatim rules).
-fn snap_uv_tiles(target: f32) -> f32 {
-    if target < 0.3 {
-        target // free slide, no snapping
-    } else if target < 0.75 {
-        0.5
-    } else if target < 1.25 {
-        1.0
-    } else if target < 1.75 {
-        1.5
+// ---------------------------------------------------------------------------
+// Junctions (RoadIntersection / intersection_ngon parity — Phase 3)
+// ---------------------------------------------------------------------------
+
+/// Two points closer than this share a RoadPoint (RoadManager proximity).
+pub const JUNCTION_EPS: f32 = 0.75;
+/// Pavement padding past the road edges.
+const JUNCTION_MARGIN: f32 = 1.2;
+/// Pavement overlap into the trimmed road ends (hides the seam).
+const JUNCTION_SLACK: f32 = 0.45;
+const JUNCTION_LIFT: f32 = 0.025;
+const MARK_LIFT: f32 = 0.05;
+
+struct Junction {
+    info: JunctionInfo,
+    /// Horizontal tangents at the junction point.
+    main_tan: Vec3,
+    cross_tan: Vec3,
+    main_half: f32,
+    cross_half: f32,
+    /// Unit arm directions pointing AWAY from the junction per road.
+    main_arms: Vec<Vec3>,
+    cross_arms: Vec<Vec3>,
+}
+
+/// Flattens a vector to the horizontal plane (junction frames are 2D).
+fn horiz(v: Vec3) -> Vec3 {
+    let h = Vec3::new(v.x, 0.0, v.z);
+    if h.mag() < 1e-6 {
+        Vec3::new(1.0, 0.0, 0.0)
     } else {
-        target.round()
+        h.normalized()
     }
 }
 
-fn uv_col_x(kind: u8, frac: f32, mirror: bool) -> f32 {
-    let col = UV_MUL[(kind as usize).min(9)] as f32;
-    let f = if mirror { 1.0 - frac } else { frac };
-    (col + f.clamp(0.0, 1.0)) * 0.125
-}
-
-// ---------------------------------------------------------------------------
-// Generation — RoadSegment pipeline per consecutive point pair
-// ---------------------------------------------------------------------------
-
-pub fn generate_road(req: &GenRequest) -> GenResponse {
-    let mut resp = GenResponse::default();
-
-    if req.points.len() < 2 {
-        resp.error = Some("At least 2 RoadPoints are required.".into());
-        return resp;
-    }
-    let pts = &req.points;
-    let density = req.manager.density.clamp(0.5, 64.0);
-
-    // Node forward vectors (central difference; RoadPoint basis.z parity).
+/// Node forward vectors (central difference; RoadPoint basis.z parity).
+fn forwards(pts: &[RoadPointData]) -> Vec<Vec3> {
     let n = pts.len();
     let mut fwd: Vec<Vec3> = Vec::with_capacity(n);
     for i in 0..n {
@@ -536,11 +583,210 @@ pub fn generate_road(req: &GenRequest) -> GenResponse {
         };
         fwd.push(f.normalized());
     }
+    fwd
+}
 
-    let manager_thick = req.manager.underside_thickness;
+fn detect_junctions(roads: &[&[RoadPointData]], fwds: &[Vec<Vec3>]) -> Vec<Junction> {
+    let mut out: Vec<Junction> = Vec::new();
+    for (ri, road) in roads.iter().enumerate().skip(1) {
+        if road.is_empty() {
+            continue;
+        }
+        for (j, cp) in road.iter().enumerate() {
+            let cpos = Vec3::new(cp.x, cp.y, cp.z);
+            let mut best: Option<(usize, f32)> = None;
+            for (i, mp) in roads[0].iter().enumerate() {
+                let d = cpos.dist(Vec3::new(mp.x, mp.y, mp.z));
+                if d < JUNCTION_EPS && best.map(|(_, bd)| d < bd).unwrap_or(true) {
+                    best = Some((i, d));
+                }
+            }
+            let Some((i, _)) = best else { continue };
+            if out
+                .iter()
+                .any(|jn: &Junction| jn.info.cross_road == ri && jn.info.main_idx == i)
+            {
+                continue;
+            }
+            let main_tan = horiz(fwds[0][i]);
+            let cross_tan = horiz(fwds[ri][j]);
+
+            // Arms pointing away from the junction along each road.
+            let main_arms: Vec<Vec3> = if roads[0].len() < 2 {
+                vec![]
+            } else if i == 0 {
+                vec![main_tan]
+            } else if i == roads[0].len() - 1 {
+                vec![main_tan.scale(-1.0)]
+            } else {
+                vec![main_tan, main_tan.scale(-1.0)]
+            };
+            let cross_arms: Vec<Vec3> = if road.len() < 2 {
+                vec![]
+            } else if j == 0 {
+                vec![cross_tan]
+            } else if j == road.len() - 1 {
+                vec![cross_tan.scale(-1.0)]
+            } else {
+                vec![cross_tan, cross_tan.scale(-1.0)]
+            };
+
+            out.push(Junction {
+                info: JunctionInfo {
+                    kind: (main_arms.len() + cross_arms.len()).min(4) as u8,
+                    x: cp.x,
+                    y: cp.y,
+                    z: cp.z,
+                    main_idx: i,
+                    cross_road: ri,
+                    cross_idx: j,
+                },
+                main_tan,
+                cross_tan,
+                main_half: section_half_width(&roads[0][i]),
+                cross_half: section_half_width(cp),
+                main_arms,
+                cross_arms,
+            });
+        }
+    }
+    out
+}
+
+/// Chamfered octagon pavement n-gon covering the meeting of both road
+/// corridors (intersection_ngon parity, simplified to a convex plate).
+fn push_junction_pavement(jn: &Junction, md: &mut MeshData) {
+    let c = Vec3::new(jn.info.x, jn.info.y, jn.info.z);
+    let tx = jn.main_tan; // along the main road
+    let tz = jn.cross_tan; // along the cross road
+    let a = jn.cross_half + JUNCTION_MARGIN; // half-extent along main tangent
+    let b = jn.main_half + JUNCTION_MARGIN; // half-extent along cross tangent
+    let ch = (a.min(b) * 0.5).min(2.6); // corner chamfer
+    let y = c.y + JUNCTION_LIFT;
+
+    let rim: [[f32; 2]; 8] = [
+        [a - ch, b],
+        [a, b - ch],
+        [a, -(b - ch)],
+        [a - ch, -b],
+        [-(a - ch), -b],
+        [-a, -(b - ch)],
+        [-a, b - ch],
+        [-(a - ch), b],
+    ];
+    let center = md.push_vertex(Vec3::new(c.x, y, c.z), UP, 0.0, 0.0);
+    let mut ring: Vec<u32> = Vec::with_capacity(8);
+    for [sx, sz] in rim {
+        let p = c.add(tx.scale(sx)).add(tz.scale(sz));
+        ring.push(md.push_vertex(Vec3::new(p.x, y, p.z), UP, 0.0, 0.0));
+    }
+    for k in 0..8 {
+        let n2 = (k + 1) % 8;
+        md.indices.extend_from_slice(&[center, ring[k], ring[n2]]);
+    }
+}
+
+/// Flat quad in the junction frame: t = along-arm axis, l = lateral axis.
+#[allow(clippy::too_many_arguments)]
+fn push_flat_quad(
+    md: &mut MeshData,
+    c: Vec3,
+    t_dir: Vec3,
+    l_dir: Vec3,
+    t0: f32,
+    t1: f32,
+    l0: f32,
+    l1: f32,
+    y: f32,
+) {
+    let p = |t: f32, l: f32| {
+        Vec3::new(
+            c.x + t_dir.x * t + l_dir.x * l,
+            y,
+            c.z + t_dir.z * t + l_dir.z * l,
+        )
+    };
+    let a = md.push_vertex(p(t0, l0), UP, 0.0, 0.0);
+    let b = md.push_vertex(p(t1, l0), UP, 0.0, 0.0);
+    let d = md.push_vertex(p(t1, l1), UP, 0.0, 0.0);
+    let e = md.push_vertex(p(t0, l1), UP, 0.0, 0.0);
+    md.push_quad(a, b, d, e);
+}
+
+/// Stop line + zebra crosswalk on one junction arm.
+fn push_arm_markings(md: &mut MeshData, c: Vec3, arm: Vec3, lateral: Vec3, half_w: f32, edge_dist: f32, y: f32) {
+    let s0 = edge_dist + 0.35;
+    let inner = (half_w - 0.5).max(0.8);
+    push_flat_quad(md, c, arm, lateral, s0, s0 + 0.45, -inner, inner, y);
+
+    let span = (half_w - 0.7) * 2.0;
+    if span <= 0.5 {
+        return;
+    }
+    let n = ((span / 1.15).floor() as i32).max(2);
+    let step = span / (n as f32 * 2.0 - 1.0);
+    let z0 = edge_dist + 1.4;
+    for k in 0..n {
+        let l0 = -span * 0.5 + 2.0 * k as f32 * step;
+        push_flat_quad(md, c, arm, lateral, z0, z0 + 2.4, l0, l0 + step, y);
+    }
+}
+
+fn push_junction_markings(jn: &Junction, md: &mut MeshData) {
+    let c = Vec3::new(jn.info.x, jn.info.y, jn.info.z);
+    let y = c.y + MARK_LIFT;
+    // Main-road arms: pavement edge sits at cross_half + margin along main.
+    for arm in &jn.main_arms {
+        push_arm_markings(
+            md,
+            c,
+            *arm,
+            jn.cross_tan,
+            jn.main_half,
+            jn.cross_half + JUNCTION_MARGIN,
+            y,
+        );
+    }
+    // Cross-road arms: pavement edge sits at main_half + margin along cross.
+    for arm in &jn.cross_arms {
+        push_arm_markings(
+            md,
+            c,
+            *arm,
+            jn.main_tan,
+            jn.cross_half,
+            jn.main_half + JUNCTION_MARGIN,
+            y,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generation — RoadSegment pipeline per consecutive point pair
+// ---------------------------------------------------------------------------
+
+/// Trim distance (meters) a junction carves out of each meeting road.
+fn junction_trim(jn: &Junction, main_side: bool, p: &RoadPointData) -> f32 {
+    let half = if main_side {
+        jn.cross_half
+    } else {
+        jn.main_half
+    };
+    half + JUNCTION_MARGIN + JUNCTION_SLACK + p.edge_edge_clipping_offset.max(0.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_one_road(
+    pts: &[RoadPointData],
+    manager: &ManagerData,
+    density: f32,
+    manager_thick: f32,
+    trims: &HashMap<usize, f32>,
+    resp: &mut GenResponse,
+) {
+    let n = pts.len();
+    let fwd = forwards(pts);
     let sections: Vec<Vec<ColSpec>> = pts.iter().map(build_section).collect();
-    let mut total_len = 0.0f32;
-    let mut total_loops = 0u32;
 
     for seg in 0..n - 1 {
         let pa = &pts[seg];
@@ -560,14 +806,22 @@ pub fn generate_road(req: &GenRequest) -> GenResponse {
         if seg_len < 0.05 {
             continue;
         }
-        total_len += seg_len;
+
+        // Junction trims at either end of this segment (u ≈ meters / length).
+        let t_start = trims.get(&seg).copied().unwrap_or(0.0) / seg_len;
+        let t_end = trims.get(&(seg + 1)).copied().unwrap_or(0.0) / seg_len;
+        if t_start + t_end >= 0.98 {
+            continue; // segment fully consumed by a junction
+        }
+
+        resp.length += seg_len;
 
         // loops = ⌊length / density⌋ (÷LOWPOLY_FACTOR when low-poly).
         let mut loops = ((seg_len / density).floor().max(1.0)) as usize;
-        if req.manager.low_poly {
+        if manager.low_poly {
             loops = ((seg_len / density / LOWPOLY_FACTOR).floor().max(1.0)) as usize;
         }
-        total_loops += loops as u32;
+        resp.loop_count += loops as u32;
 
         // UV flow (godot _build_geo): snapped tiles over segment length.
         let min_lane_width = pa.lane_width.min(pb.lane_width).max(0.5);
@@ -607,6 +861,13 @@ pub fn generate_road(req: &GenRequest) -> GenResponse {
 
         for loop_i in 0..=loops {
             let u = loop_i as f32 / loops as f32;
+            if u < t_start || u > 1.0 - t_end {
+                // Inside a junction keep-out zone: break the strip so nothing
+                // stretches across the pavement n-gon.
+                prev_top = None;
+                prev_bot = None;
+                continue;
+            }
             let pos = bez.eval(u);
             let tan = bez.deriv(u).normalized();
             let left = UP.cross(tan).normalized(); // lateral basis (documented delta)
@@ -752,34 +1013,107 @@ pub fn generate_road(req: &GenRequest) -> GenResponse {
             });
         }
 
-        resp.edge_c.extend_from_slice(&edge_c);
-        resp.edge_f.extend_from_slice(&edge_f);
-        resp.edge_r.extend_from_slice(&edge_r);
-    }
+        if !edge_c.is_empty() {
+            resp.edge_c.push(edge_c);
+        }
+        if !edge_f.is_empty() {
+            resp.edge_f.push(edge_f);
+        }
+        if !edge_r.is_empty() {
+            resp.edge_r.push(edge_r);
+        }
 
-    // Centerline overlay (editor visual, per-segment bezier samples).
-    for seg in 0..n - 1 {
-        let pa = &pts[seg];
-        let pb = &pts[seg + 1];
-        let p0 = Vec3::new(pa.x, pa.y, pa.z);
-        let p1 = Vec3::new(pb.x, pb.y, pb.z);
-        let bez = Bezier {
-            p0,
-            c1: p0.add(fwd[seg].scale(pa.next_mag.max(0.0))),
-            c2: p1.sub(fwd[seg + 1].scale(pb.prior_mag.max(0.0))),
-            p1,
-        };
+        // Centerline overlay for this segment, trimmed to the same zone.
+        let mut cl: Vec<f32> = Vec::new();
         for s in 0..=24 {
-            let p = bez.eval(s as f32 / 24.0);
-            resp.centerline.extend_from_slice(&[p.x, p.y + 0.09, p.z]);
+            let t = lerp(t_start, 1.0 - t_end, s as f32 / 24.0);
+            let p = bez.eval(t);
+            cl.extend_from_slice(&[p.x, p.y + 0.09, p.z]);
+        }
+        resp.centerline.push(cl);
+    }
+}
+
+/// RoadSegment._build_geo UV flow snapping (verbatim rules).
+fn snap_uv_tiles(target: f32) -> f32 {
+    if target < 0.3 {
+        target // free slide, no snapping
+    } else if target < 0.75 {
+        0.5
+    } else if target < 1.25 {
+        1.0
+    } else if target < 1.75 {
+        1.5
+    } else {
+        target.round()
+    }
+}
+
+fn uv_col_x(kind: u8, frac: f32, mirror: bool) -> f32 {
+    let col = UV_MUL[(kind as usize).min(9)] as f32;
+    let f = if mirror { 1.0 - frac } else { frac };
+    (col + f.clamp(0.0, 1.0)) * 0.125
+}
+
+pub fn generate_road(req: &GenRequest) -> GenResponse {
+    let mut resp = GenResponse::default();
+
+    let roads: Vec<&[RoadPointData]> = if !req.roads.is_empty() {
+        req.roads.iter().map(|r| r.as_slice()).collect()
+    } else {
+        vec![&req.points[..]]
+    };
+    if roads.is_empty() || roads[0].len() < 2 {
+        resp.error = Some("At least 2 RoadPoints are required.".into());
+        return resp;
+    }
+    let density = req.manager.density.clamp(0.5, 64.0);
+    let manager_thick = req.manager.underside_thickness;
+
+    let fwds: Vec<Vec<Vec3>> = roads.iter().map(|r| forwards(r)).collect();
+    let junctions = detect_junctions(&roads, &fwds);
+
+    // Per-road keep-out zones: point index → trim meters. Honors
+    // generate_mesh_at_intersections on the shared RoadPoint.
+    let mut trims: Vec<HashMap<usize, f32>> = vec![HashMap::new(); roads.len()];
+    for jn in &junctions {
+        let mp = &roads[0][jn.info.main_idx];
+        let cp = &roads[jn.info.cross_road][jn.info.cross_idx];
+        if mp.generate_mesh_at_intersections {
+            let m = junction_trim(jn, true, mp);
+            let e = trims[0].entry(jn.info.main_idx).or_insert(0.0f32);
+            *e = e.max(m);
+        }
+        if cp.generate_mesh_at_intersections {
+            let c = junction_trim(jn, false, cp);
+            let e = trims[jn.info.cross_road]
+                .entry(jn.info.cross_idx)
+                .or_insert(0.0f32);
+            *e = e.max(c);
         }
     }
 
-    resp.length = total_len;
-    resp.loop_count = total_loops;
-    resp.vertex_count = (resp.road.positions.len() / 3) as u32;
-    resp.triangle_count = (resp.road.indices.len() / 3) as u32;
+    for (ri, road) in roads.iter().enumerate() {
+        if road.len() < 2 {
+            continue;
+        }
+        generate_one_road(road, &req.manager, density, manager_thick, &trims[ri], &mut resp);
+    }
+
+    // Junction pavement + markings (RoadIntersection parity).
+    for jn in &junctions {
+        push_junction_pavement(jn, &mut resp.junctions);
+        push_junction_markings(jn, &mut resp.junction_marks);
+    }
+    resp.junction_count = junctions.len() as u32;
+    resp.junction_info = junctions.iter().map(|j| j.info.clone()).collect();
+
+    resp.vertex_count = (resp.road.positions.len() / 3
+        + resp.junctions.positions.len() / 3
+        + resp.junction_marks.positions.len() / 3) as u32;
+    resp.triangle_count = (resp.road.indices.len() / 3
+        + resp.junctions.indices.len() / 3
+        + resp.junction_marks.indices.len() / 3) as u32;
     resp.elapsed_us = 0;
     resp
 }
-

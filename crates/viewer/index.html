@@ -70,8 +70,30 @@
     }
     .abtn:hover { background: #f4f4f2; }
     .abtn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-    #selBox { background: #fafaf8; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 12px; display: none; }
-    #selTitle { font-size: 12.5px; font-weight: 650; margin-bottom: 4px; }
+    #selBox { margin-top: 12px; display: none; }
+    #selHead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    #selTitle { font-size: 12.5px; font-weight: 650; }
+    .jbadge { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      background: var(--teal); color: #fff; border-radius: 999px; padding: 2px 8px; }
+    .jbadge.t { background: var(--rose); }
+    .posread { font: 10.5px ui-monospace, Menlo, monospace; color: var(--mut); margin: 0 0 8px; }
+    .isec { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 6px; margin: 8px 0; }
+    .isec-t { font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); margin-bottom: 2px; }
+    .isec .row { margin: 7px 0; }
+    .lanerow { display: flex; align-items: center; gap: 7px; margin: 6px 0; }
+    .dirchip { width: 15px; height: 15px; border-radius: 4.5px; border: 1px solid rgba(0,0,0,.18); cursor: pointer; flex: none; padding: 0; }
+    .dirchip.d0 { background: #a8a29e; }
+    .dirchip.d1 { background: var(--teal); }
+    .dirchip.d2 { background: var(--rose); }
+    .dirchip.d3 { background: #d97706; }
+    .lanelab { flex: 1; font-size: 11.5px; color: var(--ink); }
+    .lanedel { border: 0; background: none; color: var(--mut); cursor: pointer; font-size: 13px; border-radius: 5px; padding: 1px 6px; }
+    .lanedel:hover { background: #fee2e2; color: var(--rose); }
+    .lanehint { font-size: 10px; color: var(--mut); margin: 4px 0 2px; }
+    .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 8px 0; }
+    .segbtn { flex: 1; border: 0; background: #fff; padding: 6px 4px; font-size: 10.5px; cursor: pointer; color: var(--mut); }
+    .segbtn + .segbtn { border-left: 1px solid var(--line); }
+    .segbtn.active { background: var(--accent); color: #fff; }
     .hint { font-size: 11px; color: var(--mut); margin: 10px 0 0; }
     #showPanel {
       position: absolute; left: 14px; top: 14px; z-index: 10; display: none;
@@ -153,6 +175,10 @@
         <label for="autolanes">Auto lanes</label>
         <input id="autolanes" type="checkbox" checked />
       </div>
+      <div class="row g">
+        <label for="jmarks">Junction markings</label>
+        <input id="jmarks" type="checkbox" checked />
+      </div>
 
       <div class="row a">
         <label for="roadw">Road width (m)</label>
@@ -201,40 +227,126 @@
       </div>
 
       <div id="selBox">
-        <div id="selTitle">RoadPoint #0</div>
-        <div class="row g">
-          <label for="sel-prior">prior_mag</label>
-          <input id="sel-prior" type="range" min="0" max="20" step="0.5" value="5" />
-          <span class="val" id="sel-prior-v">5.0</span>
+        <div id="selHead">
+          <span id="selTitle">RoadPoint #0</span>
+          <span id="selBadge" class="jbadge" style="display:none"></span>
         </div>
-        <div class="row g">
-          <label for="sel-next">next_mag</label>
-          <input id="sel-next" type="range" min="0" max="20" step="0.5" value="5" />
-          <span class="val" id="sel-next-v">5.0</span>
+        <div id="sel-pos" class="posread">x 0.0 &middot; z 0.0</div>
+
+        <div class="isec">
+          <div class="isec-t">Transform</div>
+          <div class="row">
+            <label for="sel-elev">Elevation (y)</label>
+            <input id="sel-elev" type="range" min="0" max="14" step="0.5" value="0" />
+            <span class="val" id="sel-elev-v">0 m</span>
+          </div>
         </div>
-        <div class="row a">
-          <label for="sel-easein">ease_in</label>
-          <input id="sel-easein" type="range" min="0" max="1" step="0.05" value="0.5" />
-          <span class="val" id="sel-easein-v">0.5</span>
+
+        <div class="isec g">
+          <div class="isec-t">B&eacute;zier handles</div>
+          <div class="row">
+            <label for="sel-prior">prior_mag</label>
+            <input id="sel-prior" type="range" min="0" max="20" step="0.5" value="5" />
+            <span class="val" id="sel-prior-v">5.0</span>
+          </div>
+          <div class="row">
+            <label for="sel-next">next_mag</label>
+            <input id="sel-next" type="range" min="0" max="20" step="0.5" value="5" />
+            <span class="val" id="sel-next-v">5.0</span>
+          </div>
         </div>
-        <div class="row a">
-          <label for="sel-easeout">ease_out</label>
-          <input id="sel-easeout" type="range" min="0" max="1" step="0.05" value="0.5" />
-          <span class="val" id="sel-easeout-v">0.5</span>
+
+        <div class="isec a">
+          <div class="isec-t">Hermite ease</div>
+          <div class="row">
+            <label for="sel-easein">ease_in</label>
+            <input id="sel-easein" type="range" min="0" max="1" step="0.05" value="0.5" />
+            <span class="val" id="sel-easein-v">0.50</span>
+          </div>
+          <div class="row">
+            <label for="sel-easeout">ease_out</label>
+            <input id="sel-easeout" type="range" min="0" max="1" step="0.05" value="0.5" />
+            <span class="val" id="sel-easeout-v">0.50</span>
+          </div>
         </div>
-        <div class="row">
-          <label for="sel-elev">Elevation</label>
-          <input id="sel-elev" type="range" min="0" max="14" step="0.5" value="0" />
-          <span class="val" id="sel-elev-v">0 m</span>
+
+        <div class="isec g">
+          <div class="isec-t">Lanes</div>
+          <div class="row">
+            <label for="sel-lw">lane_width</label>
+            <input id="sel-lw" type="range" min="2" max="6" step="0.25" value="4" />
+            <span class="val" id="sel-lw-v">4.0</span>
+          </div>
+          <div id="laneRows"></div>
+          <div class="btnrow">
+            <span class="grow lanehint">chip cycles NONE &rarr; FWD &rarr; REV &rarr; BOTH</span>
+            <button id="laneAdd" class="abtn">+ Add lane</button>
+          </div>
         </div>
+
+        <div class="isec g">
+          <div class="isec-t">Cross-section</div>
+          <div class="row">
+            <label for="sel-shl">shoulder_width_l</label>
+            <input id="sel-shl" type="range" min="0" max="4" step="0.25" value="2" />
+            <span class="val" id="sel-shl-v">2.0</span>
+          </div>
+          <div class="row">
+            <label for="sel-shr">shoulder_width_r</label>
+            <input id="sel-shr" type="range" min="0" max="4" step="0.25" value="2" />
+            <span class="val" id="sel-shr-v">2.0</span>
+          </div>
+          <div class="row">
+            <label for="sel-gx">gutter_profile.x</label>
+            <input id="sel-gx" type="range" min="0" max="4" step="0.25" value="2" />
+            <span class="val" id="sel-gx-v">2.0</span>
+          </div>
+          <div class="row">
+            <label for="sel-gy">gutter_profile.y</label>
+            <input id="sel-gy" type="range" min="-1.5" max="0" step="0.05" value="-0.5" />
+            <span class="val" id="sel-gy-v">-0.5</span>
+          </div>
+        </div>
+
+        <div class="isec g">
+          <div class="isec-t">Surface</div>
+          <div class="seg">
+            <button id="alignGeo" class="segbtn active">GEOMETRIC</button>
+            <button id="alignDiv" class="segbtn">DIVIDER</button>
+          </div>
+          <div class="row">
+            <label for="sel-und">underside_thickness</label>
+            <input id="sel-und" type="range" min="-1" max="1.5" step="0.05" value="-1" />
+            <span class="val" id="sel-und-v">inherit</span>
+          </div>
+          <div class="row">
+            <label for="sel-term">terminated</label>
+            <input id="sel-term" type="checkbox" />
+          </div>
+        </div>
+
+        <div class="isec g">
+          <div class="isec-t">Intersection</div>
+          <div class="row">
+            <label for="sel-gmi">generate_mesh_at_intersections</label>
+            <input id="sel-gmi" type="checkbox" checked />
+          </div>
+          <div class="row">
+            <label for="sel-eeo">edge_edge_clipping_offset</label>
+            <input id="sel-eeo" type="range" min="0" max="4" step="0.25" value="0" />
+            <span class="val" id="sel-eeo-v">0.0</span>
+          </div>
+        </div>
+
         <div class="btnrow" style="margin-top:8px">
           <button id="sel-del" class="abtn">Delete point</button>
         </div>
       </div>
 
       <p class="hint">
-        Click an amber node to edit its properties &middot; drag to move &middot; double-click
-        ground to add &middot; Del removes the selection.
+        Click any node to edit its full RoadPoint properties &middot; drag to move &middot;
+        roads sharing a node build junctions (pavement + crosswalks) &middot;
+        double-click ground to add &middot; Del removes the selection.
       </p>
     </aside>
 
@@ -245,10 +357,10 @@
 
   <footer>
     <p>
-      Pure-Rust monorepo: <span class="mono">crates/roadgen</span> (joined cores) +
+      Pure-Rust monorepo: <span class="mono">crates/roadgen</span> (joined cores + junctions) +
       <span class="mono">crates/viewer</span> (WebGL2 via wasm-bindgen) &mdash; no TypeScript, no JS app code.
     </p>
-    <p class="mono">hermite CM basis &middot; B&eacute;zier handles &middot; density loop cuts &middot; trimsheet UVs &rarr; GLSL &middot; gutters &middot; underside</p>
+    <p class="mono">hermite CM basis &middot; B&eacute;zier handles &middot; density loop cuts &middot; trimsheet UVs &rarr; GLSL &middot; junctions &middot; gutters &middot; underside</p>
   </footer>
 </body>
 </html>

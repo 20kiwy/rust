@@ -112,7 +112,11 @@ generator, performance stress test), 30+ unit test files (WAT/GUT).
 | Lane `edge_F/R/C` curves for AI | ✅ | ✅ line renderables | **P1 shipped** |
 | Per-lane `RoadLane` paths | ✅ | ✅ lane paths output | **P1 shipped** |
 | Lane transitions (`TRANSITION_ADD/REM`) | ✅ full matcher | linear cross-section blend | 🟡 approximation |
-| `RoadIntersection` n-gon hub | ✅ | — | ⛔ Phase 3 |
+| Junctions: proximity-shared RoadPoints | ✅ RoadGraphNode join | ✅ `roads[]` networks, ε-join | **P3 shipped** |
+| `generate_mesh_at_intersections` trim | ✅ | ✅ per-point trim zones | **P3 shipped** |
+| `edge_edge_clipping_offset` | ✅ | ✅ extends trim | **P3 shipped** |
+| `RoadIntersection` n-gon hub | ✅ fan hub + corner curbs + transition stitching | ✅ chamfered pavement n-gon + arm markings | 🟡 P3 simplified (convex plate) |
+| Stop lines / crosswalks at junctions | ✅ (editor decor) | ✅ stop line + zebra per arm | **P3 shipped** |
 | Terrain flatten / Terrain3D connector | ✅ | N/A (flat ground) | ⛔ engine-side |
 | Collision layers, StaticBody3D | ✅ | N/A (web viewer) | ⛔ engine-side |
 | RoadLane agents (vehicles) | ✅ | — | ⛔ Phase 4 |
@@ -130,8 +134,12 @@ Legend: ✅ = implemented · 🟡 = partial/approximation (documented) · ⛔ = 
 - **Phase 2:** full `_match_lanes` transition matcher (TRANSITION_ADD/REM lanes),
   signal-equivalent callbacks (`onRoadUpdated` into JS), manager/container inheritance
   chain (`use_parent_setting`), savable scene format (JSON ⇄ Godot `.tscn` mapper).
-- **Phase 3:** `RoadIntersection` n-gon port (fan hub, corner curbs, per-edge
-  transition stitching) — port `intersection_ngon.gd` (976 LOC) to `rust/roadgen::intersection`.
+- **Phase 3 (shipped):** junction system — `roads[]` networks in `godot.rs`, ε-proximity
+  junction detection, `generate_mesh_at_intersections`/`edge_edge_clipping_offset` trims,
+  chamfered pavement n-gon (`intersection_ngon` parity, simplified convex plate), stop
+  lines + zebra crosswalks per arm, junction-aware edge/centerline strips, full RoadPoint
+  inspector in the viewer (lanes editor, junction badges 2/3/4-way). Remaining delta:
+  dynamic re-paving of non-convex hubs and per-edge transition stitching.
 - **Phase 4:** AI lanes: `RoadLane` graph + `road_lane_agent` vehicles, A* demo parity.
 - **Phase 5 (optional native):** same core linked into Bevy/rend3 via cdylib — parity
   without the browser.

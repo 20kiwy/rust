@@ -17,7 +17,7 @@ js-sys = "0.3"
 version = "0.3"
 features = [
   "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement",
-  "HtmlInputElement", "HtmlButtonElement", "Node",
+  "HtmlInputElement", "HtmlButtonElement", "HtmlDivElement", "HtmlSpanElement", "Node",
   "Event", "EventTarget", "PointerEvent", "MouseEvent", "WheelEvent",
   "WebGl2RenderingContext", "WebGlProgram", "WebGlShader", "WebGlBuffer",
   "WebGlVertexArrayObject", "WebGlUniformLocation",
