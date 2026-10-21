@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/roadgen", "crates/viewer"]
+
+[profile.release]
+opt-level = "s"
+lto = true

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>rust-roadgen · RoadArchitect + godot-road-generator in pure Rust</title>
+  <link data-trunk rel="rust" />
+  <style>
+    :root {
+      --bg: #d8ddd3; --card: #ffffff; --line: #e4e4e0; --ink: #1c1d1f;
+      --mut: #71717a; --accent: #18181b; --teal: #0d9488; --rose: #e11d48;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--ink);
+      display: flex; flex-direction: column; min-height: 100vh; overflow: hidden;
+    }
+    header {
+      z-index: 20; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+      padding: 10px 20px; background: rgba(255,255,255,.92); border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(6px);
+    }
+    .brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+    .brand p { margin: 1px 0 0; font-size: 11.5px; color: var(--mut); }
+    #stats { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #f4f4f2; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px;
+      color: #3f3f46; white-space: nowrap;
+    }
+    main { position: relative; flex: 1; min-height: 0; }
+    #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+    #panel {
+      position: absolute; left: 14px; top: 14px; z-index: 10; width: 288px; max-width: 85vw;
+      max-height: calc(100% - 28px); overflow-y: auto; background: var(--card);
+      border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.10);
+    }
+    #panel::-webkit-scrollbar { width: 8px; } 
+    #panel::-webkit-scrollbar-thumb { background: #d9d9d4; border-radius: 8px; }
+    .ptitle { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 14px; margin-bottom: 10px; }
+    .ptitle .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+    .xbtn { margin-left: auto; border: 0; background: none; cursor: pointer; color: var(--mut); font-size: 15px; padding: 2px 6px; border-radius: 6px; }
+    .xbtn:hover { background: #f4f4f2; color: var(--ink); }
+    .modeswitch { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+    .modebtn {
+      border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 4px;
+      font-size: 11px; cursor: pointer; color: var(--mut);
+    }
+    .modebtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .seclab { font-size: 11px; color: var(--mut); margin: 12px 0 6px; }
+    #presets { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pbtn {
+      border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 5px 10px;
+      font-size: 12px; cursor: pointer;
+    }
+    .pbtn:hover { background: #f4f4f2; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 9px 0; }
+    .row label { font-size: 12.5px; flex: 1; }
+    .row .val { font: 11px ui-monospace, Menlo, monospace; color: var(--mut); min-width: 42px; text-align: right; }
+    .row input[type=range] { flex: 1.4; accent-color: var(--accent); min-width: 0; }
+    .row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+    .sep { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+    .btnrow { display: flex; align-items: center; gap: 8px; }
+    .btnrow .grow { flex: 1; font-size: 12.5px; color: var(--mut); }
+    .abtn {
+      display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line);
+      background: #fff; border-radius: 8px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+    }
+    .abtn:hover { background: #f4f4f2; }
+    .abtn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #selBox { background: #fafaf8; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 12px; display: none; }
+    #selTitle { font-size: 12.5px; font-weight: 650; margin-bottom: 4px; }
+    .hint { font-size: 11px; color: var(--mut); margin: 10px 0 0; }
+    #showPanel {
+      position: absolute; left: 14px; top: 14px; z-index: 10; display: none;
+      width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--card); cursor: pointer; font-size: 15px; box-shadow: 0 4px 14px rgba(0,0,0,.08);
+    }
+    #toast {
+      position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
+      background: rgba(255,255,255,.9); border: 1px solid var(--line); border-radius: 999px;
+      padding: 6px 14px; font-size: 11.5px; color: var(--mut); white-space: nowrap; pointer-events: none;
+    }
+    #loading {
+      position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+      background: rgba(216,221,211,.75); backdrop-filter: blur(2px);
+    }
+    #loading .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px 22px; font-size: 13px; }
+    footer {
+      z-index: 20; background: rgba(255,255,255,.92); border-top: 1px solid var(--line);
+      padding: 9px 20px; display: flex; flex-wrap: wrap; gap: 4px 18px; justify-content: space-between;
+      font-size: 11px; color: var(--mut);
+    }
+    footer a { color: inherit; font-weight: 600; }
+    footer .mono { font-family: ui-monospace, Menlo, monospace; }
+    /* Mode-conditional rows */
+    .mode-godot .a, .mode-arch .g { display: none !important; }
+    @media (max-width: 640px) {
+      .brand p { display: none; }
+      #stats { display: none; }
+      #toast { display: none; }
+    }
+  </style>
+</head>
+<body class="mode-godot">
+  <header>
+    <div class="brand">
+      <h1>rust-roadgen &rarr; WebAssembly</h1>
+      <p>RoadArchitect (Hermite) + godot-road-generator (B&eacute;zier) joined in one pure-Rust core &mdash; zero TypeScript in the build</p>
+    </div>
+    <div id="stats"></div>
+  </header>
+
+  <main>
+    <canvas id="gl"></canvas>
+
+    <button id="showPanel" title="Show panel" aria-label="Show panel">&#9776;</button>
+
+    <aside id="panel">
+      <div class="ptitle">
+        <span class="dot"></span>
+        <span id="modeTitle">Road manager</span>
+        <button id="hidePanel" class="xbtn" title="Hide panel" aria-label="Hide panel">&#8854;</button>
+      </div>
+
+      <div class="modeswitch">
+        <button class="modebtn active" data-mode="godot">godot &middot; B&eacute;zier</button>
+        <button class="modebtn" data-mode="arch">RoadArchitect &middot; Hermite</button>
+      </div>
+
+      <div class="seclab">Presets</div>
+      <div id="presets"></div>
+
+      <hr class="sep" />
+
+      <div class="row g">
+        <label for="density">Density (m/loop)</label>
+        <input id="density" type="range" min="1" max="16" step="0.5" value="4" />
+        <span class="val" id="density-v">4</span>
+      </div>
+      <div class="row g">
+        <label for="underside">Underside thickness</label>
+        <input id="underside" type="range" min="0" max="1.5" step="0.05" value="0" />
+        <span class="val" id="underside-v">0</span>
+      </div>
+      <div class="row g">
+        <label for="lowpoly">Low-poly preview</label>
+        <input id="lowpoly" type="checkbox" />
+      </div>
+      <div class="row g">
+        <label for="autolanes">Auto lanes</label>
+        <input id="autolanes" type="checkbox" checked />
+      </div>
+
+      <div class="row a">
+        <label for="roadw">Road width (m)</label>
+        <input id="roadw" type="range" min="4" max="16" step="0.5" value="8" />
+        <span class="val" id="roadw-v">8</span>
+      </div>
+      <div class="row a">
+        <label for="shoulder">Shoulder width (m)</label>
+        <input id="shoulder" type="range" min="0" max="4" step="0.25" value="1.5" />
+        <span class="val" id="shoulder-v">1.5</span>
+      </div>
+      <div class="row a">
+        <label for="spm">Samples per meter</label>
+        <input id="spm" type="range" min="0.5" max="4" step="0.1" value="2" />
+        <span class="val" id="spm-v">2</span>
+      </div>
+      <div class="row a">
+        <label for="markings">Lane markings</label>
+        <input id="markings" type="checkbox" checked />
+      </div>
+      <div class="row a">
+        <label for="ashoulders">Shoulders</label>
+        <input id="ashoulders" type="checkbox" checked />
+      </div>
+
+      <hr class="sep g" />
+      <div class="seclab g">Editor display</div>
+      <div class="row g">
+        <label for="edges">Edge curves (F/R/C)</label>
+        <input id="edges" type="checkbox" checked />
+      </div>
+      <div class="row g">
+        <label for="lanes">Lane paths</label>
+        <input id="lanes" type="checkbox" checked />
+      </div>
+      <div class="row g">
+        <label for="center">Centerline</label>
+        <input id="center" type="checkbox" checked />
+      </div>
+
+      <hr class="sep" />
+      <div class="btnrow">
+        <span class="grow" id="pcount">Points: 5</span>
+        <button id="addPt" class="abtn primary">+ Add</button>
+        <button id="resetRoad" class="abtn" title="Reset road" aria-label="Reset road">&#8635;</button>
+      </div>
+
+      <div id="selBox">
+        <div id="selTitle">RoadPoint #0</div>
+        <div class="row g">
+          <label for="sel-prior">prior_mag</label>
+          <input id="sel-prior" type="range" min="0" max="20" step="0.5" value="5" />
+          <span class="val" id="sel-prior-v">5.0</span>
+        </div>
+        <div class="row g">
+          <label for="sel-next">next_mag</label>
+          <input id="sel-next" type="range" min="0" max="20" step="0.5" value="5" />
+          <span class="val" id="sel-next-v">5.0</span>
+        </div>
+        <div class="row a">
+          <label for="sel-easein">ease_in</label>
+          <input id="sel-easein" type="range" min="0" max="1" step="0.05" value="0.5" />
+          <span class="val" id="sel-easein-v">0.5</span>
+        </div>
+        <div class="row a">
+          <label for="sel-easeout">ease_out</label>
+          <input id="sel-easeout" type="range" min="0" max="1" step="0.05" value="0.5" />
+          <span class="val" id="sel-easeout-v">0.5</span>
+        </div>
+        <div class="row">
+          <label for="sel-elev">Elevation</label>
+          <input id="sel-elev" type="range" min="0" max="14" step="0.5" value="0" />
+          <span class="val" id="sel-elev-v">0 m</span>
+        </div>
+        <div class="btnrow" style="margin-top:8px">
+          <button id="sel-del" class="abtn">Delete point</button>
+        </div>
+      </div>
+
+      <p class="hint">
+        Click an amber node to edit its properties &middot; drag to move &middot; double-click
+        ground to add &middot; Del removes the selection.
+      </p>
+    </aside>
+
+    <div id="toast">&#9990; drag to orbit &middot; wheel to zoom &middot; drag a node to move it &middot; double-click ground to add</div>
+
+    <div id="loading"><div class="card">Compiling the road in Rust&hellip; (wasm32-unknown-unknown)</div></div>
+  </main>
+
+  <footer>
+    <p>
+      Pure-Rust monorepo: <span class="mono">crates/roadgen</span> (joined cores) +
+      <span class="mono">crates/viewer</span> (WebGL2 via wasm-bindgen) &mdash; no TypeScript, no JS app code.
+    </p>
+    <p class="mono">hermite CM basis &middot; B&eacute;zier handles &middot; density loop cuts &middot; trimsheet UVs &rarr; GLSL &middot; gutters &middot; underside</p>
+  </footer>
+</body>
+</html>

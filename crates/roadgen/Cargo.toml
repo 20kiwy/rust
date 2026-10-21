@@ -1,0 +1,9 @@
+[package]
+name = "roadgen"
+version = "3.0.0"
+edition = "2021"
+description = "Joined road-generation cores in pure Rust: RoadArchitect (Hermite) + godot-road-generator (Bézier)"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,25 @@
+[package]
+name = "viewer"
+version = "3.0.0"
+edition = "2021"
+description = "Pure-Rust WebGL2 road editor preview (wasm-bindgen + web-sys, zero TypeScript)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+roadgen = { path = "../roadgen" }
+wasm-bindgen = "=0.2.129"
+js-sys = "0.3"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement",
+  "HtmlInputElement", "HtmlButtonElement", "Node",
+  "Event", "EventTarget", "PointerEvent", "MouseEvent", "WheelEvent",
+  "WebGl2RenderingContext", "WebGlProgram", "WebGlShader", "WebGlBuffer",
+  "WebGlVertexArrayObject", "WebGlUniformLocation",
+  "Performance", "DomRect", "console", "CssStyleDeclaration", "NodeList", "KeyboardEvent",
+]
